@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#0a0d12">
+  <title>Asisten File AIF</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a0d12;--panel:#111720;--line:#26313e;--text:#edf3f8;--muted:#91a0ae;--green:#72e0ad;--blue:#92bbff;--red:#ff9f9f}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 78% 0%,#142239 0,transparent 42%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}main{width:min(880px,calc(100% - 32px));margin:42px auto}.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:44px}.brand{font-weight:750;letter-spacing:.02em}.brand span{color:var(--green);margin-right:10px}.top a{color:var(--blue);font-size:14px;text-decoration:none}h1{font-size:clamp(36px,7vw,58px);line-height:1.04;letter-spacing:-.05em;margin:0 0 14px}.intro{color:var(--muted);max-width:680px;margin:0 0 28px}.panel{background:#111720ed;border:1px solid var(--line);border-radius:16px;padding:24px;margin:16px 0}.row{display:grid;grid-template-columns:1fr 1fr;gap:14px}label{display:block;font-size:13px;color:#c2ccd5;margin:14px 0 6px}input,textarea{width:100%;border:1px solid #303c49;border-radius:9px;background:#0a0d12;color:var(--text);padding:12px;font:15px system-ui}input[type=file]{padding:10px}textarea{min-height:110px;resize:vertical}button{border:0;border-radius:9px;background:var(--green);color:#08120d;padding:12px 18px;margin-top:16px;font-weight:750;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.hint,.note{font-size:13px;color:var(--muted)}#result{margin-top:16px;white-space:pre-wrap;overflow-wrap:anywhere}.answer{border-left:2px solid var(--green);padding-left:14px;color:var(--text)}.error{color:var(--red)}.foot{font-size:12px;color:#778491;margin-top:22px}#filename{color:var(--green)}@media(max-width:640px){main{margin:24px auto}.row{grid-template-columns:1fr}.top{margin-bottom:34px}.panel{padding:18px}}
+  </style>
+</head>
+<body><main>
+  <div class="top"><div class="brand"><span>↗</span>AIF / ASISTEN FILE</div><a href="/">← Webhook gateway</a></div>
+  <h1>Pahami isi file<br>dengan AI.</h1>
+  <p class="intro">Unggah dokumen, tulis pertanyaan, dan dapatkan ringkasan atau penjelasan. File hanya diproses untuk permintaan ini; aplikasi ini tidak menyimpan riwayat.</p>
+  <section class="panel"><form id="askForm">
+    <div class="row"><div><label for="accessKey">Kunci akses</label><input id="accessKey" type="password" autocomplete="off" required placeholder="Minta kunci akses kepada admin"></div><div><label for="file">Pilih file (maks. 2 MB)</label><input id="file" type="file" accept=".pdf,.docx,.txt,.md,.csv,.log,.json,.xml,.html,.htm,.yaml,.yml,.ini" required><div class="hint" id="filename">PDF, DOCX, TXT, MD, CSV, JSON, XML, HTML, YAML, INI</div></div></div>
+    <label for="question">Apa yang ingin diketahui?</label><textarea id="question" maxlength="4000" required placeholder="Contoh: Ringkas dokumen ini dan sebutkan tiga poin penting."></textarea>
+    <button id="submit" type="submit">Tanya AI</button><div id="result" aria-live="polite"></div>
+  </form></section>
+  <p class="foot">Kunci akses dan API AI diproses di server. File dibatasi 2 MB agar sesuai dengan batas request Vercel.</p>
+</main>
+<script>
+const form=document.getElementById('askForm'),fileInput=document.getElementById('file'),result=document.getElementById('result'),button=document.getElementById('submit');
+fileInput.addEventListener('change',()=>{document.getElementById('filename').textContent=fileInput.files[0]?.name||'PDF, DOCX, TXT, MD, CSV, JSON, XML, HTML, YAML, INI';});
+form.addEventListener('submit',async(event)=>{
+  event.preventDefault();const file=fileInput.files[0];if(!file)return;
+  if(file.size>2*1024*1024){result.className='error';result.textContent='Ukuran file maksimal 2 MB.';return;}
+  button.disabled=true;result.className='';result.textContent='Membaca file dan meminta jawaban…';
+  try{
+    const base64=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('File tidak dapat dibaca.'));reader.readAsDataURL(file);});
+    const response=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${document.getElementById('accessKey').value}`},body:JSON.stringify({filename:file.name,file:base64,question:document.getElementById('question').value})});
+    const data=await response.json();if(!response.ok)throw new Error(data.error||'Permintaan gagal.');
+    result.className='answer';result.textContent=data.answer+(data.truncated?'\n\nCatatan: teks file dipotong pada batas 100.000 karakter.':'');
+  }catch(error){result.className='error';result.textContent=error.message||'Tidak dapat menghubungi server.';}finally{button.disabled=false;}
+});
+</script></body></html>

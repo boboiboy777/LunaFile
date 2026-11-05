@@ -1,0 +1,11 @@
+'use client';
+import { useState } from 'react';
+
+export default function AdminPage(){
+ const [password,setPassword]=useState('');const [data,setData]=useState(null);const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+ async function load(e){e?.preventDefault();setBusy(true);setError('');try{const r=await fetch('/api/admin',{headers:{authorization:`Basic ${btoa(`admin:${password}`)}`},cache:'no-store'});if(!r.ok)throw new Error(r.status===401?'Kata sandi admin salah atau belum diatur.':'Tidak dapat memuat panel admin.');setData(await r.json());}catch(e){setError(e.message);}finally{setBusy(false);}}
+ return <main className="shell"><a href="/" className="muted">← Beranda</a><h1>Panel admin</h1><p className="muted">Masukkan kata sandi ADMIN_PASSWORD dari file .env.</p>
+ <form className="toolbar" onSubmit={load}><input className="field" type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Kata sandi admin"/><button disabled={busy}>{busy?'Memuat…':'Masuk'}</button></form>
+ {error&&<p className="error">{error}</p>}{data&&<><p className="status">Panel terhubung.</p><section className="panel"><span className="metric">Pengguna: {data.totals.users}</span><span className="metric">Panggilan AI: {data.totals.calls}</span><span className="metric">Gagal: {data.totals.failed}</span><span className="metric">Token: {data.totals.tokens}</span></section><section className="panel"><h2>Pengguna</h2><div className="table-wrap"><table><thead><tr><th>ID</th><th>Nama</th><th>Username</th><th>File sukses</th><th>AI</th><th>Terakhir aktif</th></tr></thead><tbody>{data.users.map(u=><tr key={u.user_id}><td>{u.user_id}</td><td>{u.display_name}</td><td>{u.username?`@${u.username}`:'—'}</td><td>{u.files_success}</td><td>{u.ai_calls}</td><td>{u.last_seen}</td></tr>)}</tbody></table></div></section><section className="panel"><h2>Permintaan AI terbaru</h2><div className="table-wrap"><table><thead><tr><th>User</th><th>Model</th><th>Status</th><th>Token</th><th>Waktu</th></tr></thead><tbody>{data.requests.map(r=><tr key={r.id}><td>{r.user_id} {r.username&&`@${r.username}`}</td><td>{r.model}</td><td>{r.status}</td><td>{r.total_tokens}</td><td>{r.created_at}</td></tr>)}</tbody></table></div></section></>}
+ </main>;
+}

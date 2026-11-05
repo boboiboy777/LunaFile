@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+admin_stats.sqlite3*
+node_modules/
+.wa_sessions/
+.en
+*.log
+*.pid

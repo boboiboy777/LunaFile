@@ -1,0 +1,1 @@
+{"name":"aif-webhook-site","private":true,"version":"1.0.0","description":"AIF web app and webhook gateway for Vercel","scripts":{"dev":"vercel dev"},"dependencies":{"mammoth":"^1.9.1","pdf-parse":"^1.1.1"}}

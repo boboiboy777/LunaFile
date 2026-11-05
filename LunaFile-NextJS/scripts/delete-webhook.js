@@ -1,0 +1,3 @@
+import fs from 'node:fs';import path from 'node:path';import {fileURLToPath} from 'node:url';
+const dir=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),file=path.join(dir,'.env');if(fs.existsSync(file))for(const line of fs.readFileSync(file,'utf8').split(/\r?\n/)){const m=line.match(/^\s*([\w]+)\s*=\s*(.*)\s*$/);if(m&&!process.env[m[1]])process.env[m[1]]=m[2].replace(/^(['"])(.*)\1$/,'$2');}
+const token=process.env.TELEGRAM_BOT_TOKEN;if(!token)throw new Error('TELEGRAM_BOT_TOKEN belum diatur.');const r=await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`,{method:'POST'});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.description||'deleteWebhook gagal');console.log('Webhook Telegram dihapus.');

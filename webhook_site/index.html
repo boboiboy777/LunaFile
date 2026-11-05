@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#0a0d12">
+  <title>AIF Webhook Gateway</title>
+  <style>
+    :root{color-scheme:dark;--bg:#0a0d12;--line:#26313e;--text:#edf3f8;--muted:#91a0ae;--green:#72e0ad;--blue:#92bbff}*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at 80% 0%,#142239 0,transparent 42%),var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif}main{width:min(980px,calc(100% - 32px));margin:52px auto}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:34px}.brand{display:flex;align-items:center;gap:12px;font-weight:750;letter-spacing:.02em}.mark{width:40px;height:40px;display:grid;place-items:center;border:1px solid #345342;border-radius:12px;color:var(--green);background:#102019}.status{color:var(--muted);font-size:14px}.status:before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#73808b;margin-right:8px}.status.online:before{background:var(--green);box-shadow:0 0 12px #72e0ad88}h1{max-width:720px;font-size:clamp(36px,7vw,64px);line-height:1.02;letter-spacing:-.055em;margin:0 0 16px}.intro{max-width:650px;color:var(--muted);margin:0 0 30px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}section{background:#111720e8;border:1px solid var(--line);border-radius:16px;padding:22px}h2{font-size:17px;margin:0 0 12px}p{margin:8px 0;color:var(--muted)}code,pre{font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}code{color:var(--blue);overflow-wrap:anywhere}pre{margin:14px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#c3d1dc;background:#0a0d12;border:1px solid #202a35;border-radius:10px;padding:14px}.endpoint{display:flex;gap:10px;align-items:center;justify-content:space-between;background:#0a0d12;border:1px solid #202a35;border-radius:9px;padding:10px 12px;margin:10px 0}.method{color:var(--green);font-size:11px;font-weight:800;letter-spacing:.08em}.endpoint code{text-align:right}label{display:block;color:#c2ccd5;font-size:13px;margin:12px 0 6px}input,textarea{width:100%;border:1px solid #303c49;border-radius:9px;background:#0a0d12;color:var(--text);padding:11px 12px;font:14px ui-monospace,monospace}textarea{min-height:108px;resize:vertical}button{margin-top:12px;border:0;border-radius:9px;background:var(--green);color:#08120d;padding:11px 16px;font-weight:750;cursor:pointer}button:disabled{opacity:.6;cursor:wait}#result{min-height:24px;font-size:13px}.note{border-left:2px solid #4d6b93;padding-left:12px;font-size:13px}footer{color:#778491;font-size:12px;padding:22px 2px}@media(max-width:700px){main{margin:28px auto}.grid{grid-template-columns:1fr}.top{margin-bottom:26px}}
+  </style>
+</head>
+<body><main>
+  <div class="top"><div class="brand"><span class="mark">↗</span><span>AIF / WEBHOOK GATEWAY</span></div><div class="status" id="status">Memeriksa konfigurasi</div></div>
+  <h1>Terima event.<br>Kirim ke Telegram.</h1>
+  <p class="intro">Satu endpoint sederhana untuk menerima webhook JSON dari layanan lain. Gateway memeriksa kunci akses lalu meneruskan event ke chat Telegram yang Anda pilih.</p>
+  <div class="grid">
+    <section><h2>Asisten file AIF</h2><p>Unggah PDF, DOCX, atau file teks lalu ajukan pertanyaan ke AI.</p><a href="/app.html" style="display:inline-block;margin-top:8px;border-radius:9px;background:#72e0ad;color:#08120d;padding:11px 16px;font-weight:750;text-decoration:none">Buka asisten file →</a><p class="note">Memerlukan konfigurasi API AI dan kunci akses web di Vercel.</p></section>
+    <section><h2>Endpoint</h2><p>Untuk berbagai layanan yang mengirim JSON:</p>
+      <div class="endpoint"><span class="method">POST</span><code id="genericUrl">/api/webhook</code></div>
+      <p>Untuk event Telekos dengan validasi tanda tangan:</p><div class="endpoint"><span class="method">POST</span><code id="telekosUrl">/api/telekos</code></div>
+      <p class="note">Endpoint umum memakai <code>Authorization: Bearer WEBHOOK_API_KEY</code>. Telekos memakai signature resminya.</p>
+      <pre>curl -X POST https://domain-anda/api/webhook \
+  -H 'Authorization: Bearer KUNCI_ANDA' \
+  -H 'Content-Type: application/json' \
+  -d '{"source":"my-api","message":"Webhook berhasil"}'</pre>
+    </section>
+    <section><h2>Kirim event percobaan</h2><p>Kunci hanya digunakan browser saat tombol ditekan dan tidak disimpan halaman.</p>
+      <form id="testForm"><label for="key">WEBHOOK_API_KEY</label><input id="key" type="password" autocomplete="off" required placeholder="Kunci dari Vercel Environment Variables">
+        <label for="payload">JSON event</label><textarea id="payload" spellcheck="false">{
+  "source": "test",
+  "message": "Webhook berhasil diterima"
+}</textarea><button id="send" type="submit">Kirim ke Telegram</button><p id="result" aria-live="polite"></p>
+      </form>
+    </section>
+    <section><h2>Konfigurasi Vercel</h2><p>Tambahkan environment variables di Project → Settings → Environment Variables, lalu redeploy.</p>
+      <pre>TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
+WEBHOOK_API_KEY
+TELEKOS_WEBHOOK_SECRET</pre><p>Secret hanya dibaca fungsi server. Health check tidak menampilkan nilainya.</p>
+    </section>
+    <section><h2>Health check</h2><div class="endpoint"><span>Service</span><code id="health">Memuat…</code></div><p id="healthDetails">Memeriksa environment variables server.</p><p>Payload diteruskan sebagai pesan teks. Riwayat event tidak disimpan.</p></section>
+  </div><footer>AIF Webhook Gateway · Menerima POST JSON hingga 1 MB.</footer>
+</main>
+<script>
+  const origin=window.location.origin;
+  document.getElementById('genericUrl').textContent=`${origin}/api/webhook`;
+  document.getElementById('telekosUrl').textContent=`${origin}/api/telekos`;
+  fetch('/api/health').then(r=>r.json()).then(s=>{
+    const status=document.getElementById('status');status.textContent=s.ok?'Gateway aktif':'Gateway bermasalah';status.classList.toggle('online',!!s.ok);
+    document.getElementById('health').textContent=s.ok?'ONLINE':'OFFLINE';
+    document.getElementById('healthDetails').textContent=[`Telegram: ${s.telegramConfigured?'siap':'belum diatur'}`,`Webhook umum: ${s.genericWebhookConfigured?'siap':'belum diatur'}`,`Telekos: ${s.telekosConfigured?'siap':'belum diatur'}`].join(' · ');
+  }).catch(()=>{document.getElementById('status').textContent='Belum terhubung';document.getElementById('health').textContent='UNAVAILABLE';document.getElementById('healthDetails').textContent='Deploy ke Vercel untuk mengaktifkan endpoint.';});
+  document.getElementById('testForm').addEventListener('submit',async event=>{
+    event.preventDefault();const button=document.getElementById('send'),result=document.getElementById('result');button.disabled=true;result.textContent='Mengirim…';
+    try{const payload=JSON.parse(document.getElementById('payload').value);const response=await fetch('/api/webhook',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${document.getElementById('key').value}`},body:JSON.stringify(payload)});const data=await response.json();result.textContent=response.ok?'Berhasil diteruskan ke Telegram.':`Gagal (${response.status}): ${data.error||'Permintaan ditolak'}`;}
+    catch(error){result.textContent=error instanceof SyntaxError?'JSON tidak valid.':'Tidak dapat menghubungi endpoint.';}finally{button.disabled=false;}
+  });
+</script></body></html>
