@@ -79,6 +79,12 @@ def _connect() -> sqlite3.Connection:
         db.execute("ALTER TABLE payments ADD COLUMN channel_announced INTEGER NOT NULL DEFAULT 0")
         db.execute("UPDATE payments SET channel_announced=1 WHERE status='paid'")
     db.execute("CREATE TABLE IF NOT EXISTS number_wallets (user_id INTEGER PRIMARY KEY, balance_idr INTEGER NOT NULL DEFAULT 0)")
+    db.execute("""CREATE TABLE IF NOT EXISTS referrals (
+        invitee_id INTEGER PRIMARY KEY, inviter_id INTEGER NOT NULL, joined_at TEXT NOT NULL,
+        signup_bonus_idr INTEGER NOT NULL DEFAULT 200)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS referral_commissions (
+        order_id TEXT PRIMARY KEY, inviter_id INTEGER NOT NULL, invitee_id INTEGER NOT NULL,
+        amount_idr INTEGER NOT NULL, created_at TEXT NOT NULL)""")
     db.execute("""CREATE TABLE IF NOT EXISTS number_orders (
         order_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL, price_idr INTEGER NOT NULL,
         status TEXT NOT NULL, created_at TEXT NOT NULL)""")
@@ -104,6 +110,36 @@ def record_event(user: Any, event: str) -> None:
             (user.id, getattr(user, "username", None) or "", _name(user), now, now))
         if field:
             db.execute(f"UPDATE users SET {field}={field}+1 WHERE user_id=?", (user.id,))
+
+
+def register_referral(inviter_id: int, invitee_id: int, signup_bonus_idr: int = 200) -> bool:
+    """Attribute a first-time user to an inviter and grant the signup bonus once."""
+    if inviter_id == invitee_id or signup_bonus_idr <= 0:
+        return False
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        inviter = db.execute("SELECT 1 FROM users WHERE user_id=?", (inviter_id,)).fetchone()
+        invitee = db.execute("SELECT 1 FROM users WHERE user_id=?", (invitee_id,)).fetchone()
+        prior_referral = db.execute("SELECT 1 FROM referrals WHERE invitee_id=?", (invitee_id,)).fetchone()
+        if not inviter or invitee or prior_referral:
+            return False
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        db.execute("INSERT INTO referrals(invitee_id,inviter_id,joined_at,signup_bonus_idr) VALUES(?,?,?,?)",
+                   (invitee_id, inviter_id, now, signup_bonus_idr))
+        db.execute("INSERT INTO number_wallets(user_id,balance_idr) VALUES(?,?) "
+                   "ON CONFLICT(user_id) DO UPDATE SET balance_idr=number_wallets.balance_idr+excluded.balance_idr",
+                   (invitee_id, signup_bonus_idr))
+        return True
+
+
+def get_referral_summary(user_id: int) -> dict[str, int]:
+    with _connect() as db:
+        invited = int(db.execute("SELECT COUNT(*) FROM referrals WHERE inviter_id=?", (user_id,)).fetchone()[0])
+        signup_rewards = int(db.execute("SELECT COALESCE(SUM(signup_bonus_idr),0) FROM referrals WHERE inviter_id=?",
+                                        (user_id,)).fetchone()[0])
+        commission = int(db.execute("SELECT COALESCE(SUM(amount_idr),0) FROM referral_commissions WHERE inviter_id=?",
+                                    (user_id,)).fetchone()[0])
+    return {"invited": invited, "signup_rewards": signup_rewards, "commission": commission}
 
 
 def begin_ai_request(user: Any, model: str) -> int | None:
@@ -154,6 +190,15 @@ def _render_page() -> bytes:
         users = db.execute("SELECT * FROM users ORDER BY last_seen DESC LIMIT 200").fetchall()
         requests = db.execute("""SELECT r.*,u.username,u.display_name FROM ai_requests r
             LEFT JOIN users u USING(user_id) ORDER BY r.id DESC LIMIT 20""").fetchall()
+        payments = db.execute("""SELECT order_id,user_id,amount_idr,purpose,paid_at,created_at
+            FROM payments WHERE status='paid' AND purpose IN ('premium','numbers_topup')
+            ORDER BY COALESCE(paid_at,created_at) DESC LIMIT 20""").fetchall()
+        revenue = db.execute("""SELECT purpose,COUNT(*) transactions,COALESCE(SUM(amount_idr),0) amount_idr
+            FROM payments WHERE status='paid' AND purpose IN ('premium','numbers_topup') GROUP BY purpose""").fetchall()
+    revenue_by_purpose = {row['purpose']: dict(row) for row in revenue}
+    premium_revenue = int(revenue_by_purpose.get('premium', {}).get('amount_idr', 0))
+    topup_revenue = int(revenue_by_purpose.get('numbers_topup', {}).get('amount_idr', 0))
+    payment_count = sum(int(row['transactions']) for row in revenue)
     esc = lambda v: html.escape(str(v if v is not None else ""))
     metrics = [("Pengguna", totals["users"]), ("Aktif hari ini", active), ("Panggilan AI", totals["calls"]),
                ("Gagal", totals["failed"]), ("Token input", totals["input_tokens"]),
@@ -167,10 +212,23 @@ def _render_page() -> bytes:
     request_rows = "".join('<tr><td>'+esc(r["created_at"].replace("T"," "))+'</td><td>'+esc(r["display_name"] or r["user_id"])+
         '</td><td>'+esc(r["model"])+'</td><td>'+esc(r["status"])+'</td><td>'+f'{r["input_tokens"]:,} / {r["output_tokens"]:,}'+
         (' <small>API</small>' if r["usage_reported"] else ' <small>n/a</small>')+'</td></tr>' for r in requests)
+    payment_rows = "".join('<tr><td>'+esc((r['paid_at'] or r['created_at']).replace('T',' '))+
+        '</td><td>'+esc('Premium' if r['purpose'] == 'premium' else 'Top up saldo nomor')+
+        '</td><td><code>'+esc(r['user_id'])+'</code></td><td>'+esc(r['order_id'])+
+        '</td><td>Rp'+f'{int(r["amount_idr"]):,}'+ '</td></tr>' for r in payments)
+    revenue_metrics = [('Pendapatan Midtrans', premium_revenue + topup_revenue),
+                       ('Pembelian Premium', premium_revenue), ('Top up saldo', topup_revenue),
+                       ('Transaksi berhasil', payment_count)]
+    revenue_cards = ''.join('<div class="card"><span>'+esc(k)+'</span><strong>'+esc(f'Rp{v:,}' if k != 'Transaksi berhasil' else f'{v:,}')+'</strong></div>'
+                            for k, v in revenue_metrics)
     style = "body{margin:0;background:#0b1020;color:#edf2ff;font:15px system-ui}main{max-width:1200px;margin:auto;padding:28px 18px}p,small{color:#9aa9c3}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:24px 0}.card,.box{background:#141c30;border:1px solid #27334d;border-radius:12px;padding:16px}.card span{display:block;color:#9aa9c3;font-size:13px}.card strong{display:block;font-size:25px;margin-top:6px}.box{margin:20px 0;overflow:hidden}h2{font-size:18px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;min-width:680px}th,td{text-align:left;padding:10px;border-bottom:1px solid #27334d;white-space:nowrap}th{color:#9aa9c3;font-size:12px}code{color:#77aaff}.note{font-size:13px}"
     page = ('<!doctype html><html lang="id"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta http-equiv="refresh" content="30"><title>Admin Bot</title><style>'+style+'</style><main><h1>Admin panel</h1>'
         '<p>Statistik bot Telegram · diperbarui otomatis setiap 30 detik</p><section class="grid">'+cards+'</section>'
+        '<h2>Pendapatan Midtrans</h2><section class="grid">'+revenue_cards+'</section>'
+        '<section class="box"><h2>Transaksi Midtrans berhasil</h2><div class="scroll"><table><thead><tr><th>Waktu dibayar (UTC)</th><th>Jenis</th><th>ID Telegram</th><th>ID transaksi</th><th>Nominal</th></tr></thead><tbody>'+
+        (payment_rows or '<tr><td colspan="5">Belum ada pembayaran berhasil.</td></tr>')+'</tbody></table></div>'
+        '<p class="note">Pendapatan dihitung dari pembayaran Premium dan top up yang berstatus paid setelah status settlement Midtrans diverifikasi.</p></section>'
         '<section class="box"><h2>Pengguna</h2><div class="scroll"><table><thead><tr><th>Nama</th><th>ID Telegram</th><th>Terakhir aktif (UTC)</th><th>File</th><th>Panggilan AI</th><th>Total token</th></tr></thead><tbody>'+
         (user_rows or '<tr><td colspan="6">Belum ada aktivitas.</td></tr>')+'</tbody></table></div></section>'
         '<section class="box"><h2>Panggilan AI terbaru</h2><div class="scroll"><table><thead><tr><th>Waktu (UTC)</th><th>Pengguna</th><th>Model</th><th>Status</th><th>Input / output token</th></tr></thead><tbody>'+
@@ -233,9 +291,16 @@ def get_admin_summary() -> dict[str, Any]:
         active = db.execute("SELECT COUNT(*) FROM users WHERE substr(last_seen,1,10)=?", (date.today().isoformat(),)).fetchone()[0]
         recent = db.execute("""SELECT r.*,u.username,u.display_name FROM ai_requests r
             LEFT JOIN users u USING(user_id) ORDER BY r.id DESC LIMIT 5""").fetchall()
+        revenue = db.execute("""SELECT purpose,COUNT(*) transactions,COALESCE(SUM(amount_idr),0) amount_idr
+            FROM payments WHERE status='paid' AND purpose IN ('premium','numbers_topup') GROUP BY purpose""").fetchall()
     result = dict(row)
     result["active_today"] = active
     result["recent"] = [dict(r) for r in recent]
+    by_purpose = {payment["purpose"]: dict(payment) for payment in revenue}
+    result["premium_revenue_idr"] = int(by_purpose.get("premium", {}).get("amount_idr", 0))
+    result["topup_revenue_idr"] = int(by_purpose.get("numbers_topup", {}).get("amount_idr", 0))
+    result["payment_count"] = sum(int(payment["transactions"]) for payment in revenue)
+    result["revenue_idr"] = result["premium_revenue_idr"] + result["topup_revenue_idr"]
     return result
 
 
@@ -540,6 +605,26 @@ def number_wallet_balance(user_id: int) -> int:
     return int(row["balance_idr"]) if row else 0
 
 
+def credit_number_wallet(user_id: int, amount_idr: int) -> None:
+    if amount_idr <= 0:
+        raise ValueError("Nominal saldo harus lebih besar dari nol")
+    with _connect() as db:
+        db.execute(
+            "INSERT INTO number_wallets(user_id,balance_idr) VALUES(?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET balance_idr=number_wallets.balance_idr+excluded.balance_idr",
+            (user_id, amount_idr),
+        )
+
+
+def clear_number_wallet(user_id: int) -> None:
+    with _connect() as db:
+        db.execute(
+            "INSERT INTO number_wallets(user_id,balance_idr) VALUES(?,0) "
+            "ON CONFLICT(user_id) DO UPDATE SET balance_idr=0",
+            (user_id,),
+        )
+
+
 def debit_number_wallet(user_id: int, amount_idr: int, order: dict[str, Any]) -> bool:
     """Charge an order once, after Telekos confirms it was created."""
     with _connect() as db:
@@ -554,6 +639,16 @@ def debit_number_wallet(user_id: int, amount_idr: int, order: dict[str, Any]) ->
         db.execute("INSERT INTO number_orders(order_id,user_id,price_idr,status,created_at) VALUES(?,?,?,?,?)",
                    (order["id"], user_id, amount_idr, str(order.get("status", "waiting")),
                     datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        referral = db.execute("SELECT inviter_id FROM referrals WHERE invitee_id=?", (user_id,)).fetchone()
+        commission_idr = amount_idr // 100
+        if referral and commission_idr > 0:
+            inviter_id = int(referral["inviter_id"])
+            db.execute("INSERT INTO number_wallets(user_id,balance_idr) VALUES(?,?) "
+                       "ON CONFLICT(user_id) DO UPDATE SET balance_idr=number_wallets.balance_idr+excluded.balance_idr",
+                       (inviter_id, commission_idr))
+            db.execute("INSERT INTO referral_commissions(order_id,inviter_id,invitee_id,amount_idr,created_at) VALUES(?,?,?,?,?)",
+                       (order["id"], inviter_id, user_id, commission_idr,
+                        datetime.now(timezone.utc).isoformat(timespec="seconds")))
         return True
 
 

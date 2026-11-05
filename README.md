@@ -33,6 +33,8 @@ Isi `TELEGRAM_BOT_TOKEN` dan `APINEX_API_KEY` di `.env`. Untuk nomor virtual, at
 python bot.py
 ```
 
+Kode bot dipisah per fitur: `bot.py` menangani titik masuk, halaman awal, dan alur umum; `nav.py` menangani navigasi; `num.py` menangani katalog dan pesanan nomor; `vid.py` menangani video downloader; `file.py` menangani pemrosesan file; `airdrop.py` menangani garapan airdrop; `invite.py` menangani undangan; dan `buy.py` menangani pembelian Premium serta pembayaran QRIS.
+
 
 ### Admin panel di Telegram
 
@@ -49,6 +51,8 @@ Pengguna dapat membuka daftar garapan melalui tombol **Garapan Airdrop** di menu
 Bot menyediakan menu **Beli Nomor** atau perintah `/nomor` untuk memilih server, layanan, negara, dan harga dari katalog live Telekos. Sebelum membuat pesanan, bot mengambil penawaran/harga terbaru; setelah nomor diterima, harga Telekos ditambah margin Rp1.000 dipotong dari saldo nomor pengguna. OTP dapat diperiksa dari pesanan, dan pesanan yang memenuhi syarat dapat dibatalkan untuk mengembalikan saldo.
 
 Top up saldo nomor dilakukan lewat QRIS Midtrans (`/saldo`) dengan pilihan Rp5.000, Rp10.000, Rp20.000, Rp50.000, dan Rp100.000. Saldo tersebut adalah saldo internal bot. Operator bot tetap perlu menjaga saldo akun Telekos cukup untuk menutup pesanan. Integrasi memakai API v1 `https://telekos.id/v1`, autentikasi Bearer, katalog `/servers`, `/apps`, `/countries`, `/prices`, dan pengelolaan pesanan `/orders`. Pembelian menggunakan `offer_id` dan kunci idempotensi. Pembatalan mengikuti status `can_cancel` dari Telekos. Top up QRIS mengisi saldo internal bot, bukan saldo akun Telekos.
+
+Pengguna dapat membuka **Undang teman** dari halaman utama atau `/invite`. Tautan undangan memberi saldo nomor Rp200 kepada teman baru saat pertama kali membuka bot. Pengundang mendapat komisi saldo sebesar 1% dari setiap pembelian nomor teman yang berhasil diproses. Bonus pendaftaran dan komisi dicatat sekali agar pengulangan `/start` atau pemrosesan order ulang tidak menggandakan saldo.
 
 Pengumuman transaksi dikirim ke channel Telegram melalui `NUMBER_PURCHASE_CHANNEL_ID`. Untuk mewajibkan langganan, channel transaksi saat ini adalah `@lunafiletrx`; bot memeriksa keanggotaan sebelum memproses perintah, pesan, atau tombol, lalu meminta pengguna bergabung dan menekan tombol verifikasi jika belum menjadi anggota. Bot harus menjadi admin channel agar pemeriksaan keanggotaan berfungsi. Tambahkan bot sebagai admin dengan izin mengirim pesan. Setiap pembelian sukses akan mengirim layanan, negara, server, nomor yang disamarkan, dan waktu WIB. Pembelian Premium QRIS, pemberian Premium manual oleh admin, dan penukaran kode redeem yang berhasil juga diumumkan dengan ID Telegram, jenis transaksi, durasi, nominal (untuk QRIS), serta waktu WIB; kode redeem tidak ditampilkan.
 
@@ -68,7 +72,7 @@ Pengguna membuka `/paket`, memilih durasi 1 hari (Rp3.000), 5 hari (Rp8.000), 7 
 
 Panel hanya mendengarkan di perangkat lokal (`127.0.0.1`) dan meminta Basic Auth dengan nama pengguna `admin`. Buka `http://127.0.0.1:8787` di browser perangkat yang menjalankan bot. Kata sandi acak dibuat di `.env`; lihat dengan `grep '^ADMIN_PASSWORD=' .env`. Untuk menggantinya, edit nilai tersebut lalu mulai ulang bot.
 
-Panel menampilkan pengguna Telegram, aktivitas, panggilan AI, dan pemakaian token per pengguna. Token dicatat dari field `usage` pada respons AI. Jika penyedia API tidak mengirim field itu, pemakaian ditandai sebagai tidak dilaporkan dan tidak diestimasi. Database lokal `admin_stats.sqlite3` hanya menyimpan statistik, bukan isi file atau pesan.
+Panel menampilkan pengguna Telegram, aktivitas, panggilan AI, pemakaian token, serta pendapatan kotor pembayaran Midtrans yang berhasil untuk pembelian Premium dan top up saldo. Ringkasan memisahkan kedua jenis pembayaran dan memuat transaksi terbaru; transaksi pending atau gagal tidak dihitung. Nilai memakai nominal pembayaran sebelum biaya Midtrans, bukan pencairan bersih. Token dicatat dari field `usage` pada respons AI. Jika penyedia API tidak mengirim field itu, pemakaian ditandai sebagai tidak dilaporkan dan tidak diestimasi. Database lokal `admin_stats.sqlite3` menyimpan statistik dan riwayat pembayaran, bukan isi file atau pesan.
 
 ### Menjalankan terus di Termux
 

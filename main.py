@@ -201,6 +201,9 @@ def _admin_dashboard_text() -> str:
             f"Token output: {data['output_tokens']:,}\n"
             f"Total token: {data['total_tokens']:,}\n"
             f"Pemakaian dilaporkan API: {data['reported']:,} panggilan\n\n"
+            f"Pendapatan Midtrans: Rp{data['revenue_idr']:,}\n"
+            f"├ Pembelian Premium: Rp{data['premium_revenue_idr']:,}\n"
+            f"└ Top up saldo: Rp{data['topup_revenue_idr']:,} ({data['payment_count']:,} transaksi berhasil)\n\n"
             "Pilih bagian yang ingin dilihat di bawah.")
 
 
