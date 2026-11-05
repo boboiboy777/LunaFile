@@ -49,7 +49,7 @@ async def handle_pending_text(update: Any, context: Any) -> bool:
             await update.message.reply_text("Nominal tidak valid. Kirim angka, misalnya 900000 atau 900.000.")
             return True
         if amount_idr < NUMBER_TOPUP_MIN_IDR:
-            await update.message.reply_text("Minimal top up saldo nomor adalah Rp3.000. Coba lagi atau gunakan /batal.")
+            await update.message.reply_text("Minimal top up Saldo adalah Rp3.000. Coba lagi atau gunakan /batal.")
             return True
         context.user_data.pop("number_topup_waiting_amount", None)
         await buy._create_qris_payment(update.effective_message, context, update.effective_user,
@@ -95,6 +95,27 @@ def _number_object(result: dict[str, Any]) -> dict[str, Any]:
 def _format_number_idr(amount: int) -> str:
     return f"{int(amount):,}".replace(",", ".")
 
+def _number_profit_idr(provider_price: int) -> int:
+    """Return the configured profit tier for a Telekos base price."""
+    price = max(0, int(provider_price))
+    if price <= 10_000:
+        return NUMBER_MARKUP_IDR
+    if price <= 20_000:
+        return 2_000
+    if price < 30_000:
+        return 3_000
+    if price < 50_000:
+        return 4_500
+    if price <= 100_000:
+        return 6_000
+    if price <= 200_000:
+        return 10_000
+    # Keep the highest configured tier for prices above Rp400.000 as well.
+    return 25_000
+
+def _number_customer_price(provider_price: int) -> int:
+    return int(provider_price) + _number_profit_idr(provider_price)
+
 def _number_page_rows(user_data: dict[str, Any], group: str, page: int = 0) -> list[list[InlineKeyboardButton]]:
     configs = {
         "servers": ("number_servers", "number_server_tokens", "server"),
@@ -116,7 +137,7 @@ def _number_page_rows(user_data: dict[str, Any], group: str, page: int = 0) -> l
         if group == "countries":
             label = f"{item.get('flag', '')} {item.get('name', 'Negara')}"
         elif group == "services":
-            price = int(item.get("price", 0)) + NUMBER_MARKUP_IDR
+            price = _number_customer_price(int(item.get("price", 0)))
             label = f"Rp {_format_number_idr(price)} • {item.get('stock', 0)} stok"
         elif group == "telegram":
             server_name = item.get("server", {}).get("name", item.get("server", {}).get("id", "Server"))
@@ -220,14 +241,17 @@ async def _announce_number_purchase(bot: Any, user_id: int, service: dict[str, A
     text = (
         "🎉 <b>PEMBELIAN NOMOR BERHASIL:</b>\n"
         "————————————–––––——––•\n"
-        f"• ID Telegram: <a href=\"tg://user?id={int(user_id)}\">{int(user_id)}</a>\n"
         f"• Layanan Aplikasi: {html_escape(str(app.get('name', app.get('id', 'Aplikasi'))))}\n"
         f"• Negara: {html_escape(country_name)}\n"
         f"• Server: {html_escape(str(server.get('name', server.get('id', 'Server'))))}\n"
         f"• Nomor: <code>{html_escape(_mask_phone_number(str(order['number'])))}</code>\n"
         f"• Waktu: {purchased_at.strftime('%d/%m/%Y, %H.%M')}"
     )
-    await bot.send_message(chat_id=NUMBER_PURCHASE_CHANNEL_ID, text=text, parse_mode=ParseMode.HTML)
+    me = await bot.get_me()
+    rows = ([[InlineKeyboardButton("🛒 Beli Nomor", url=f"https://t.me/{me.username}?start=beli_nomor")]]
+            if me.username else [])
+    await bot.send_message(chat_id=NUMBER_PURCHASE_CHANNEL_ID, text=text, parse_mode=ParseMode.HTML,
+                           reply_markup=InlineKeyboardMarkup(rows) if rows else None)
 
 def _num_nav(rows: list[list[InlineKeyboardButton]] | None = None) -> InlineKeyboardMarkup:
     buttons = list(rows or [])
@@ -239,6 +263,7 @@ def _wallet_topup_markup() -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(f"Rp{amount:,}", callback_data=f"plan:topup:{amount}")]
             for amount in NUMBER_TOPUP_AMOUNTS]
     rows.append([InlineKeyboardButton("✍️ Input nominal", callback_data="wallet:custom")])
+    rows.append([InlineKeyboardButton("⭐ Beli Premium", callback_data="nav:premium")])
     return _num_nav(rows)
 
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -246,7 +271,8 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     context.user_data["number_nav_stack"] = []
     await update.effective_message.reply_text(
-        f"💰 Saldo untuk membeli nomor: Rp{admin_panel.number_wallet_balance(update.effective_user.id):,}",
+        f"💰 Saldo Anda: Rp{admin_panel.number_wallet_balance(update.effective_user.id):,}\n"
+        "Saldo dapat digunakan untuk membeli nomor atau Premium.",
         reply_markup=_wallet_topup_markup())
 
 async def numbers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -463,7 +489,7 @@ async def numbers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 return
             balance = admin_panel.number_wallet_balance(user.id)
             await _edit_number_message(query,
-                f"Beli nomor {service['country']['app'].get('name', service['country']['app'].get('id'))} · {service['country'].get('name')}?\nHarga: Rp {_format_number_idr(int(service.get('price', 0)) + NUMBER_MARKUP_IDR)} • {service.get('stock', 0)} stok\nSaldo Anda: Rp{balance:,}",
+                f"Beli nomor {service['country']['app'].get('name', service['country']['app'].get('id'))} · {service['country'].get('name')}?\nHarga: Rp {_format_number_idr(_number_customer_price(int(service.get('price', 0))))} • {service.get('stock', 0)} stok\nSaldo Anda: Rp{balance:,}",
                 reply_markup=_num_nav([[InlineKeyboardButton("✅ Beli nomor", callback_data=f"numbers:buy:{parts[2]}")]]))
             return
         if len(parts) == 3 and parts[1] == "buy":
@@ -479,7 +505,7 @@ async def numbers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 async with _NUMBER_PURCHASE_LOCK:
                     balance = admin_panel.number_wallet_balance(user.id)
                     quoted_price = int(service.get("price", 0))
-                    quoted_customer_price = quoted_price + NUMBER_MARKUP_IDR
+                    quoted_customer_price = _number_customer_price(quoted_price)
                     if balance < quoted_customer_price:
                         await _edit_number_message(query,
                             f"Saldo kurang. Harga nomor Rp{quoted_customer_price:,}; saldo Anda Rp{balance:,}.",
@@ -500,7 +526,7 @@ async def numbers_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                         raise RuntimeError("Telekos tidak mengirim ID pesanan atau nomor.")
                     provider_price = int(payload.get("price", quoted_price))
                     order = {"id": str(transaction_id), "number": str(payload["number"]),
-                             "price": provider_price + NUMBER_MARKUP_IDR, "status": payload.get("status", "waiting")}
+                             "price": _number_customer_price(provider_price), "status": payload.get("status", "waiting")}
                     if not admin_panel.debit_number_wallet(user.id, order["price"], order):
                         log.error("Telekos membuat order %s tetapi saldo internal gagal dipotong", transaction_id)
                         await _edit_number_message(query,
@@ -597,5 +623,6 @@ async def wallet_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     await _edit_number_message(
         query,
-        f"💰 Saldo nomor Anda: Rp{admin_panel.number_wallet_balance(user.id):,}\n\nPilih nominal QRIS:",
+        f"💰 Saldo Anda: Rp{admin_panel.number_wallet_balance(user.id):,}\n"
+        "Saldo dapat digunakan untuk membeli nomor atau Premium.\n\nPilih nominal top up QRIS:",
         reply_markup=_wallet_topup_markup())

@@ -29,7 +29,7 @@ INSERT OR IGNORE INTO settings VALUES('number_purchase_visible','0');
 CREATE TABLE IF NOT EXISTS monthly_usage(user_id INTEGER NOT NULL,month TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,month));
 CREATE TABLE IF NOT EXISTS daily_usage(user_id INTEGER NOT NULL,day TEXT NOT NULL,calls INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(user_id,day));
 CREATE TABLE IF NOT EXISTS premium_users(user_id INTEGER PRIMARY KEY,expires_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS redeem_codes(code TEXT PRIMARY KEY,plan_days INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,created_by INTEGER NOT NULL,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS redeem_codes(code TEXT PRIMARY KEY,plan_days INTEGER NOT NULL,max_uses INTEGER NOT NULL,used_count INTEGER NOT NULL DEFAULT 0,created_by INTEGER NOT NULL,created_at TEXT NOT NULL,is_gift INTEGER NOT NULL DEFAULT 0,gift_amount_idr INTEGER NOT NULL DEFAULT 0,gift_status TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS redeem_claims(code TEXT NOT NULL,user_id INTEGER NOT NULL,redeemed_at TEXT NOT NULL,PRIMARY KEY(code,user_id));
 CREATE TABLE IF NOT EXISTS payments(order_id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,amount_idr INTEGER NOT NULL,plan_days INTEGER NOT NULL DEFAULT 30,purpose TEXT NOT NULL DEFAULT 'premium',status TEXT NOT NULL,created_at TEXT NOT NULL,expires_at TEXT NOT NULL,paid_at TEXT,channel_announced INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS number_wallets(user_id INTEGER PRIMARY KEY,balance_idr INTEGER NOT NULL DEFAULT 0);
@@ -46,6 +46,9 @@ ensureColumn('payments', 'plan_days', 'INTEGER NOT NULL DEFAULT 30');
 ensureColumn('payments', 'purpose', "TEXT NOT NULL DEFAULT 'premium'");
 ensureColumn('payments', 'paid_at', 'TEXT');
 ensureColumn('payments', 'channel_announced', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('redeem_codes', 'is_gift', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('redeem_codes', 'gift_amount_idr', 'INTEGER NOT NULL DEFAULT 0');
+ensureColumn('redeem_codes', 'gift_status', "TEXT NOT NULL DEFAULT ''");
 db.exec("UPDATE payments SET channel_announced=1 WHERE status='paid'");
 
 const iso = () => new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
@@ -112,6 +115,17 @@ export function numberBalance(id) { return Number(db.prepare('SELECT balance_idr
 export function addWallet(id, amount) {
   db.prepare('INSERT INTO number_wallets(user_id,balance_idr) VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET balance_idr=balance_idr+excluded.balance_idr').run(id, amount);
 }
+export function purchasePremiumWithWallet(userId, days, amount) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const balance = numberBalance(userId);
+    if (balance < amount) { db.exec('ROLLBACK'); return { ok: false, balance }; }
+    db.prepare('UPDATE number_wallets SET balance_idr=balance_idr-? WHERE user_id=?').run(amount, userId);
+    const expiresAt = grantPremium(userId, days);
+    db.exec('COMMIT');
+    return { ok: true, balance: balance - amount, expires_at: expiresAt };
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
 export function debitWallet(id, amount, order) {
   db.exec('BEGIN IMMEDIATE');
   try {
@@ -166,6 +180,7 @@ export function redeem(code,userId) {
   try {
     const c = db.prepare('SELECT * FROM redeem_codes WHERE code=?').get(code.toUpperCase());
     if (!c) { db.exec('ROLLBACK'); return ['invalid']; }
+    if (c.is_gift) { db.exec('ROLLBACK'); return ['gift_channel',c.plan_days,c.used_count,c.max_uses]; }
     if (db.prepare('SELECT 1 FROM redeem_claims WHERE code=? AND user_id=?').get(code.toUpperCase(),userId)) { db.exec('ROLLBACK'); return ['already_used',c.plan_days,c.used_count,c.max_uses]; }
     if (c.used_count >= c.max_uses) { db.exec('ROLLBACK'); return ['exhausted',c.plan_days,c.used_count,c.max_uses]; }
     db.prepare('INSERT INTO redeem_claims VALUES(?,?,?)').run(code.toUpperCase(),userId,iso());
@@ -189,7 +204,45 @@ export function recentUsers() { return db.prepare('SELECT user_id,username,displ
 export function createRedeem(code,days,max,admin) { db.prepare('INSERT INTO redeem_codes(code,plan_days,max_uses,created_by,created_at) VALUES(?,?,?,?,?)').run(code.toUpperCase(),days,max,admin,iso()); }
 export function claimAnnouncement(orderId) { return db.prepare("UPDATE payments SET channel_announced=1 WHERE order_id=? AND channel_announced=0").run(orderId).changes===1; }
 export function addPaymentNumberOrder(orderId,userId,price,status='waiting') { db.prepare('INSERT OR REPLACE INTO number_orders VALUES(?,?,?,?,?)').run(orderId,userId,price,status,iso()); }
-export function listRedeems() { return db.prepare('SELECT * FROM redeem_codes ORDER BY created_at DESC LIMIT 10').all(); }
+export function listRedeems() { return db.prepare('SELECT * FROM redeem_codes WHERE is_gift=0 ORDER BY created_at DESC LIMIT 10').all(); }
+export function createPremiumGift(code,gifterId,days,users,amount) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const balance=numberBalance(gifterId);
+    if(balance<amount){db.exec('ROLLBACK');return{ok:false,balance};}
+    db.prepare('UPDATE number_wallets SET balance_idr=balance_idr-? WHERE user_id=?').run(amount,gifterId);
+    db.prepare("INSERT INTO redeem_codes(code,plan_days,max_uses,created_by,created_at,is_gift,gift_amount_idr,gift_status) VALUES(?,?,?,?,?,1,?,'publishing')")
+      .run(code.toUpperCase(),days,users,gifterId,iso(),amount);
+    db.exec('COMMIT');return{ok:true,balance:balance-amount};
+  } catch(e) {db.exec('ROLLBACK');throw e;}
+}
+export function activatePremiumGift(code) { return db.prepare("UPDATE redeem_codes SET gift_status='active' WHERE code=? AND is_gift=1 AND gift_status='publishing'").run(code.toUpperCase()).changes===1; }
+export function cancelPremiumGift(code) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const gift=db.prepare("SELECT created_by,gift_amount_idr FROM redeem_codes WHERE code=? AND is_gift=1 AND gift_status='publishing'").get(code.toUpperCase());
+    if(!gift){db.exec('ROLLBACK');return false;}
+    db.prepare("UPDATE redeem_codes SET gift_status='cancelled' WHERE code=?").run(code.toUpperCase());
+    db.prepare('UPDATE number_wallets SET balance_idr=balance_idr+? WHERE user_id=?').run(gift.gift_amount_idr,gift.created_by);
+    db.exec('COMMIT');return true;
+  } catch(e) {db.exec('ROLLBACK');throw e;}
+}
+export function claimPremiumGift(code,userId) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const gift=db.prepare('SELECT * FROM redeem_codes WHERE code=? AND is_gift=1').get(code.toUpperCase());
+    if(!gift){db.exec('ROLLBACK');return{state:'invalid'};}
+    if(gift.created_by===userId){db.exec('ROLLBACK');return{state:'self_claim'};}
+    if(gift.gift_status==='claimed'||gift.used_count>=gift.max_uses){db.exec('ROLLBACK');return{state:'claimed'};}
+    if(gift.gift_status!=='active'){db.exec('ROLLBACK');return{state:'unavailable'};}
+    if(db.prepare('SELECT 1 FROM redeem_claims WHERE code=? AND user_id=?').get(code.toUpperCase(),userId)){db.exec('ROLLBACK');return{state:'already_claimed'};}
+    db.prepare('INSERT INTO redeem_claims VALUES(?,?,?)').run(code.toUpperCase(),userId,iso());
+    const usedCount=Number(gift.used_count)+1,maxUses=Number(gift.max_uses),status=usedCount>=maxUses?'claimed':'active';
+    db.prepare('UPDATE redeem_codes SET used_count=?,gift_status=? WHERE code=?').run(usedCount,status,code.toUpperCase());
+    const expiresAt=grantPremium(userId,gift.plan_days);
+    db.exec('COMMIT');return{state:'ok',days:gift.plan_days,gifterId:gift.created_by,usedCount,maxUses,remaining:maxUses-usedCount,expires_at:expiresAt};
+  } catch(e) {db.exec('ROLLBACK');throw e;}
+}
 export function deleteAirdrop(id) { return db.prepare('DELETE FROM airdrop_tasks WHERE id=?').run(id).changes>0; }
 export function getAirdrop(id) { return db.prepare('SELECT * FROM airdrop_tasks WHERE id=?').get(id); }
 export function getAdminUser(id) { return db.prepare('SELECT * FROM users WHERE user_id=?').get(id); }

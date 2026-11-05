@@ -28,24 +28,57 @@ async def plans_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not user:
         return
     plan = admin_panel.get_user_plan(user.id, FREE_DAILY_AI_LIMIT, PREMIUM_MONTHLY_AI_LIMIT)
+    balance = admin_panel.number_wallet_balance(user.id)
     premium_note = f"\nStatus Anda: {plan['plan']}."
     if plan["expires_at"]:
         premium_time = datetime.fromisoformat(plan["expires_at"]).strftime("%Y-%m-%d %H:%M:%S")
         premium_note += f" Berlaku sampai {premium_time} UTC."
-    payment_ready = bool(MIDTRANS_SERVER_KEY)
     package_lines = [f"• {days} hari — Rp{price:,}" for days, price in PREMIUM_PACKAGES.items()]
     message = ("💎 <b>PREMIUM</b> 💎\n\n"
                "Premium: Unlimited file.\n\n"
-               "Pilihan paket (masa aktif ditambahkan ke sisa masa aktif):\n" + "\n".join(package_lines))
-    if payment_ready:
-        message += "\n\nPilih paket untuk membayar melalui QRIS."
-        buttons = [[InlineKeyboardButton(f"{days} hari · Rp{price:,}", callback_data=f"plan:buy:{days}")]
-                   for days, price in PREMIUM_PACKAGES.items()]
-        keyboard = _tab_keyboard(buttons)
-    else:
-        message += "\n\nPembelian QRIS belum dikonfigurasi. Hubungi admin bot."
-        keyboard = _tab_keyboard()
+               "Pilihan paket (masa aktif ditambahkan ke sisa masa aktif):\n" + "\n".join(package_lines) +
+               f"\n\nSaldo Anda: Rp{balance:,}. Pilih paket untuk melihat cara pembayaran.")
+    buttons = [[InlineKeyboardButton(f"{days} hari · Rp{price:,}", callback_data=f"plan:select:{days}")]
+               for days, price in PREMIUM_PACKAGES.items()]
+    keyboard = _tab_keyboard(buttons)
     await update.effective_message.reply_text(message + premium_note, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+
+async def _announce_wallet_premium_purchase(bot: Any, user_id: int, days: int, amount_idr: int) -> None:
+    if not NUMBER_PURCHASE_CHANNEL_ID:
+        return
+    purchased_at = datetime.now(WIB)
+    text = (
+        "🎉 <b>PEMBELIAN PREMIUM DARI SALDO:</b>\n"
+        "————————————–––––——––•\n"
+        f"• ID Telegram: <a href=\"tg://user?id={int(user_id)}\">{int(user_id)}</a>\n"
+        f"• Paket: Premium {days} hari\n"
+        f"• Nominal: Rp{amount_idr:,}\n"
+        f"• Waktu: {purchased_at.strftime('%d/%m/%Y, %H.%M')} WIB"
+    )
+    try:
+        await bot.send_message(chat_id=NUMBER_PURCHASE_CHANNEL_ID, text=text, parse_mode=ParseMode.HTML)
+    except Exception:
+        log.exception("Gagal mengirim pengumuman pembelian Premium dengan saldo")
+
+
+def _premium_payment_options(days: int, price: int, balance: int) -> tuple[str, InlineKeyboardMarkup]:
+    buttons = []
+    if balance >= price:
+        buttons.append([InlineKeyboardButton("💰 Bayar dengan Saldo", callback_data=f"plan:wallet:{days}")])
+    elif MIDTRANS_SERVER_KEY:
+        buttons.append([InlineKeyboardButton("➕ Top up Saldo", callback_data="wallet:home")])
+    if MIDTRANS_SERVER_KEY:
+        buttons.append([InlineKeyboardButton("📱 Bayar melalui QRIS", callback_data=f"plan:qris:{days}")])
+    buttons.append([InlineKeyboardButton("⬅️ Pilih paket lain", callback_data="nav:premium")])
+    text = f"Premium {days} hari · Rp{price:,}\nSaldo Anda: Rp{balance:,}\n\n"
+    if balance >= price:
+        text += "Pilih pembayaran dengan Saldo" + (" atau QRIS." if MIDTRANS_SERVER_KEY else ".")
+    elif MIDTRANS_SERVER_KEY:
+        text += f"Saldo kurang Rp{price - balance:,}. Anda bisa top up Saldo atau membayar dengan QRIS."
+    else:
+        text += f"Saldo kurang Rp{price - balance:,} dan QRIS belum dikonfigurasi. Hubungi admin bot."
+    return text, _tab_keyboard(buttons)
 
 def _midtrans_url_is_valid(url: str) -> bool:
     try:
@@ -85,7 +118,7 @@ def _number_topup_receipt(payment: dict[str, Any]) -> str:
         f"Nominal: Rp{payment['amount_idr']:,}\n"
         f"Waktu: {paid_time.strftime('%d-%m-%Y %H:%M:%S')} WIB\n"
         f"ID transaksi: <code>{html_escape(str(payment['order_id']))}</code>\n"
-        f"Saldo nomor: Rp{admin_panel.number_wallet_balance(payment['user_id']):,}"
+        f"Saldo: Rp{admin_panel.number_wallet_balance(payment['user_id']):,}"
     )
 
 async def _send_qris_status(bot: Any, user_id: int, order_id: str, message: str) -> None:
@@ -177,7 +210,7 @@ async def _create_qris_payment(message: Any, context: ContextTypes.DEFAULT_TYPE,
     if purpose == "premium":
         item_id, item_name = f"premium-{plan_days}d", f"Premium {plan_days} hari"
     else:
-        item_id, item_name = f"numbers-topup-{amount_idr}", f"Top up saldo nomor Rp{amount_idr:,}"
+        item_id, item_name = f"numbers-topup-{amount_idr}", f"Top up Saldo Rp{amount_idr:,}"
     order_id = f"{'PREM' if purpose == 'premium' else 'WAL'}-{user.id}-{uuid.uuid4().hex[:16]}"
     expiry = datetime.now(timezone.utc) + timedelta(minutes=15)
     local_expiry = expiry.isoformat(timespec="seconds")
@@ -225,7 +258,7 @@ async def _create_qris_payment(message: Any, context: ContextTypes.DEFAULT_TYPE,
         payment_buttons.append([InlineKeyboardButton("✖️ Batal transaksi",
                                                       callback_data=f"plan:cancel:{order_id}")])
         keyboard = _tab_keyboard(payment_buttons)
-        caption = (f"QRIS Premium {plan_days} hari" if purpose == "premium" else "QRIS Top Up Saldo Nomor")
+        caption = (f"QRIS Premium {plan_days} hari" if purpose == "premium" else "QRIS Top Up Saldo")
         caption += f"\nNominal: Rp{amount_idr:,}\nBerlaku 15 menit. Setelah membayar, saldo akan diproses otomatis."
         if not MIDTRANS_IS_PRODUCTION:
             caption += (
@@ -298,8 +331,40 @@ async def payment_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     await query.answer()
     parts = (query.data or "").split(":")
-    if len(parts) == 3 and parts[1] in {"buy", "topup"}:
-        purpose = "premium" if parts[1] == "buy" else "numbers_topup"
+    if len(parts) == 3 and parts[1] == "select":
+        try:
+            plan_days = int(parts[2])
+            amount_idr = PREMIUM_PACKAGES[plan_days]
+        except (ValueError, KeyError):
+            await query.message.reply_text("Paket Premium tidak valid.")
+            return
+        balance = admin_panel.number_wallet_balance(user.id)
+        text, keyboard = _premium_payment_options(plan_days, amount_idr, balance)
+        await query.edit_message_text(text, reply_markup=keyboard)
+        return
+    if len(parts) == 3 and parts[1] == "wallet":
+        try:
+            plan_days = int(parts[2])
+            amount_idr = PREMIUM_PACKAGES[plan_days]
+        except (ValueError, KeyError):
+            await query.message.reply_text("Paket Premium tidak valid.")
+            return
+        purchased, expires_at, balance = admin_panel.purchase_premium_with_wallet(
+            user.id, plan_days, amount_idr)
+        if not purchased:
+            text, keyboard = _premium_payment_options(plan_days, amount_idr, balance)
+            await query.edit_message_text("Saldo berubah sebelum transaksi selesai.\n\n" + text,
+                                          reply_markup=keyboard)
+            return
+        expires = datetime.fromisoformat(expires_at).strftime("%Y-%m-%d %H:%M:%S")
+        await query.edit_message_text(
+            f"✅ Premium {plan_days} hari berhasil dibeli dengan Saldo.\n"
+            f"Aktif sampai {expires} UTC.\nSaldo tersisa: Rp{balance:,}",
+            reply_markup=_tab_keyboard([[InlineKeyboardButton("⭐ Lihat paket", callback_data="nav:premium")]]))
+        await _announce_wallet_premium_purchase(context.bot, user.id, plan_days, amount_idr)
+        return
+    if len(parts) == 3 and parts[1] in {"buy", "qris", "topup"}:
+        purpose = "numbers_topup" if parts[1] == "topup" else "premium"
         try:
             if purpose == "premium":
                 plan_days = int(parts[2])

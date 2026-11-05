@@ -60,7 +60,16 @@ def _connect() -> sqlite3.Connection:
     db.execute("CREATE TABLE IF NOT EXISTS premium_users (user_id INTEGER PRIMARY KEY, expires_at TEXT NOT NULL)")
     db.execute("""CREATE TABLE IF NOT EXISTS redeem_codes (
         code TEXT PRIMARY KEY, plan_days INTEGER NOT NULL, max_uses INTEGER NOT NULL,
-        used_count INTEGER NOT NULL DEFAULT 0, created_by INTEGER NOT NULL, created_at TEXT NOT NULL)""")
+        used_count INTEGER NOT NULL DEFAULT 0, created_by INTEGER NOT NULL, created_at TEXT NOT NULL,
+        is_gift INTEGER NOT NULL DEFAULT 0, gift_amount_idr INTEGER NOT NULL DEFAULT 0,
+        gift_status TEXT NOT NULL DEFAULT '')""")
+    redeem_columns = {row[1] for row in db.execute("PRAGMA table_info(redeem_codes)")}
+    if "is_gift" not in redeem_columns:
+        db.execute("ALTER TABLE redeem_codes ADD COLUMN is_gift INTEGER NOT NULL DEFAULT 0")
+    if "gift_amount_idr" not in redeem_columns:
+        db.execute("ALTER TABLE redeem_codes ADD COLUMN gift_amount_idr INTEGER NOT NULL DEFAULT 0")
+    if "gift_status" not in redeem_columns:
+        db.execute("ALTER TABLE redeem_codes ADD COLUMN gift_status TEXT NOT NULL DEFAULT ''")
     db.execute("""CREATE TABLE IF NOT EXISTS redeem_claims (
         code TEXT NOT NULL, user_id INTEGER NOT NULL, redeemed_at TEXT NOT NULL,
         PRIMARY KEY(code,user_id))""")
@@ -213,7 +222,7 @@ def _render_page() -> bytes:
         '</td><td>'+esc(r["model"])+'</td><td>'+esc(r["status"])+'</td><td>'+f'{r["input_tokens"]:,} / {r["output_tokens"]:,}'+
         (' <small>API</small>' if r["usage_reported"] else ' <small>n/a</small>')+'</td></tr>' for r in requests)
     payment_rows = "".join('<tr><td>'+esc((r['paid_at'] or r['created_at']).replace('T',' '))+
-        '</td><td>'+esc('Premium' if r['purpose'] == 'premium' else 'Top up saldo nomor')+
+        '</td><td>'+esc('Premium' if r['purpose'] == 'premium' else 'Top up Saldo')+
         '</td><td><code>'+esc(r['user_id'])+'</code></td><td>'+esc(r['order_id'])+
         '</td><td>Rp'+f'{int(r["amount_idr"]):,}'+ '</td></tr>' for r in payments)
     revenue_metrics = [('Pendapatan Midtrans', premium_revenue + topup_revenue),
@@ -494,9 +503,85 @@ def create_redeem_code(code: str, days: int, max_uses: int, created_by: int) -> 
 
 def list_redeem_codes(limit: int = 8) -> list[dict[str, Any]]:
     with _connect() as db:
-        rows = db.execute("SELECT code,plan_days,max_uses,used_count,created_at FROM redeem_codes ORDER BY created_at DESC LIMIT ?",
+        rows = db.execute("SELECT code,plan_days,max_uses,used_count,created_at FROM redeem_codes WHERE is_gift=0 ORDER BY created_at DESC LIMIT ?",
                            (limit,)).fetchall()
     return [dict(row) for row in rows]
+
+
+def create_premium_gift(code: str, gifter_id: int, days: int, users: int,
+                        amount_idr: int) -> tuple[bool, int]:
+    """Charge a shared-balance gift and reserve its public claims atomically."""
+    if not 1 <= days <= 1000 or not 1 <= users <= 1000 or amount_idr <= 0:
+        raise ValueError("Durasi gift atau nominal tidak valid")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        wallet = db.execute("SELECT balance_idr FROM number_wallets WHERE user_id=?", (gifter_id,)).fetchone()
+        balance = int(wallet["balance_idr"]) if wallet else 0
+        if balance < amount_idr:
+            return False, balance
+        db.execute("UPDATE number_wallets SET balance_idr=balance_idr-? WHERE user_id=?", (amount_idr, gifter_id))
+        db.execute("""INSERT INTO redeem_codes(
+            code,plan_days,max_uses,created_by,created_at,is_gift,gift_amount_idr,gift_status)
+            VALUES(?,?,?,?,?,1,?,'publishing')""",
+            (code.upper(), days, users, gifter_id, now, amount_idr))
+        return True, balance - amount_idr
+
+
+def activate_premium_gift(code: str) -> bool:
+    with _connect() as db:
+        cursor = db.execute("UPDATE redeem_codes SET gift_status='active' WHERE code=? AND is_gift=1 AND gift_status='publishing'",
+                            (code.upper(),))
+        return cursor.rowcount == 1
+
+
+def cancel_premium_gift(code: str) -> bool:
+    """Cancel an unpublished gift and return its charge to the giver."""
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        gift = db.execute("SELECT created_by,gift_amount_idr FROM redeem_codes "
+                          "WHERE code=? AND is_gift=1 AND gift_status='publishing'", (code.upper(),)).fetchone()
+        if not gift:
+            return False
+        db.execute("UPDATE redeem_codes SET gift_status='cancelled' WHERE code=?", (code.upper(),))
+        db.execute("UPDATE number_wallets SET balance_idr=balance_idr+? WHERE user_id=?",
+                   (int(gift["gift_amount_idr"]), int(gift["created_by"])))
+        return True
+
+
+def claim_premium_gift(code: str, user_id: int) -> tuple[str, int, int, int, int, str | None]:
+    """Claim one of a published gift's uses and extend Premium atomically."""
+    now = datetime.now(timezone.utc)
+    stamp = now.isoformat(timespec="seconds")
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        gift = db.execute("SELECT * FROM redeem_codes WHERE code=? AND is_gift=1", (code.upper(),)).fetchone()
+        if not gift:
+            return "invalid", 0, 0, 0, 0, None
+        gifter_id = int(gift["created_by"])
+        days = int(gift["plan_days"])
+        used_count = int(gift["used_count"])
+        max_uses = int(gift["max_uses"])
+        if gifter_id == user_id:
+            return "self_claim", days, gifter_id, used_count, max_uses, None
+        if gift["gift_status"] == "claimed" or used_count >= max_uses:
+            return "claimed", days, gifter_id, used_count, max_uses, None
+        if gift["gift_status"] != "active":
+            return "unavailable", days, gifter_id, used_count, max_uses, None
+        if db.execute("SELECT 1 FROM redeem_claims WHERE code=? AND user_id=?", (code.upper(), user_id)).fetchone():
+            return "already_claimed", days, gifter_id, used_count, max_uses, None
+        premium = db.execute("SELECT expires_at FROM premium_users WHERE user_id=?", (user_id,)).fetchone()
+        base = datetime.fromisoformat(premium["expires_at"]) if premium and premium["expires_at"] > stamp else now
+        expires = (base + timedelta(days=days)).isoformat(timespec="seconds")
+        db.execute("INSERT INTO redeem_claims(code,user_id,redeemed_at) VALUES(?,?,?)", (code.upper(), user_id, stamp))
+        used_count = int(gift["used_count"]) + 1
+        max_uses = int(gift["max_uses"])
+        status = "claimed" if used_count >= max_uses else "active"
+        db.execute("UPDATE redeem_codes SET used_count=?,gift_status=? WHERE code=?",
+                   (used_count, status, code.upper()))
+        db.execute("INSERT INTO premium_users(user_id,expires_at) VALUES(?,?) "
+                   "ON CONFLICT(user_id) DO UPDATE SET expires_at=excluded.expires_at", (user_id, expires))
+        return "ok", days, gifter_id, used_count, max_uses, expires
 
 
 def redeem_code(code: str, user_id: int) -> tuple[str, int, int, int]:
@@ -508,6 +593,8 @@ def redeem_code(code: str, user_id: int) -> tuple[str, int, int, int]:
         row = db.execute("SELECT * FROM redeem_codes WHERE code=?", (code.upper(),)).fetchone()
         if not row:
             return "invalid", 0, 0, 0
+        if row["is_gift"]:
+            return "gift_channel", int(row["plan_days"]), int(row["used_count"]), int(row["max_uses"])
         if db.execute("SELECT 1 FROM redeem_claims WHERE code=? AND user_id=?", (code.upper(), user_id)).fetchone():
             return "already_used", int(row["plan_days"]), int(row["used_count"]), int(row["max_uses"])
         if row["used_count"] >= row["max_uses"]:
@@ -614,6 +701,28 @@ def credit_number_wallet(user_id: int, amount_idr: int) -> None:
             "ON CONFLICT(user_id) DO UPDATE SET balance_idr=number_wallets.balance_idr+excluded.balance_idr",
             (user_id, amount_idr),
         )
+
+
+def purchase_premium_with_wallet(user_id: int, days: int, amount_idr: int) -> tuple[bool, str | None, int]:
+    """Atomically charge the shared balance and extend the user's Premium plan."""
+    if days <= 0 or amount_idr <= 0:
+        raise ValueError("Paket dan nominal harus lebih besar dari nol")
+    now = datetime.now(timezone.utc)
+    stamp = now.isoformat(timespec="seconds")
+    with _connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        wallet = db.execute("SELECT balance_idr FROM number_wallets WHERE user_id=?", (user_id,)).fetchone()
+        balance = int(wallet["balance_idr"]) if wallet else 0
+        if balance < amount_idr:
+            return False, None, balance
+        db.execute("UPDATE number_wallets SET balance_idr=balance_idr-? WHERE user_id=?", (amount_idr, user_id))
+        premium = db.execute("SELECT expires_at FROM premium_users WHERE user_id=?", (user_id,)).fetchone()
+        base = datetime.fromisoformat(premium["expires_at"]) if premium and premium["expires_at"] > stamp else now
+        expires = (base + timedelta(days=days)).isoformat(timespec="seconds")
+        db.execute("INSERT INTO premium_users(user_id,expires_at) VALUES(?,?) "
+                   "ON CONFLICT(user_id) DO UPDATE SET expires_at=excluded.expires_at",
+                   (user_id, expires))
+        return True, expires, balance - amount_idr
 
 
 def clear_number_wallet(user_id: int) -> None:

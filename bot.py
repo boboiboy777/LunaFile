@@ -144,6 +144,9 @@ def _admin_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🪂 Garapan Airdrop", callback_data="admin:airdrop")],
     ])
 
+def _admin_contact_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("💬 Hubungi admin", url="https://t.me/kujopinkman")]])
+
 AIRDROP_PAGE_SIZE = 5
 
 def _admin_dashboard_text() -> str:
@@ -163,10 +166,9 @@ def _admin_dashboard_text() -> str:
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        user_id = update.effective_user.id if update.effective_user else "tidak tersedia"
         await update.message.reply_text(
-            f"Akses admin ditolak. ID Telegram Anda: {user_id}. "
-            "Anda bukan admin.")
+            "@kujopinkman adalah admin. Apakah Anda ingin menghubungi admin?",
+            reply_markup=_admin_contact_keyboard())
         return
     await update.message.reply_text(_admin_dashboard_text(), reply_markup=_admin_keyboard())
 
@@ -191,7 +193,7 @@ def _user_dashboard_text(user: Any) -> str:
         f"├ 🆔 Userid: {dashboard['user_id']}",
         f"├ 👤 Username: {username}",
         f"├ 👑 Status: {status}",
-        f"└ 💰 Saldo nomor: Rp{admin_panel.number_wallet_balance(user_id):,}",
+        f"└ 💰 Saldo: Rp{admin_panel.number_wallet_balance(user_id):,}",
         "",
         "📊 𝗦𝗧𝗔𝗧𝗜𝗦𝗧𝗜𝗞 𝗨𝗦𝗘𝗥",
         f"├ 🤖 AI {plan['quota_period']}: {plan['used']}/{plan['limit']}",
@@ -207,13 +209,14 @@ def _user_dashboard_text(user: Any) -> str:
 
 def _home_actions_keyboard() -> InlineKeyboardMarkup:
     number_row = ([InlineKeyboardButton("📱 Beli Nomor", callback_data="numbers:start"),
-                   InlineKeyboardButton("💰 Saldo Nomor", callback_data="wallet:home")]
+                   InlineKeyboardButton("💰 Saldo", callback_data="wallet:home")]
                   if admin_panel.is_number_purchase_visible() else
-                  [InlineKeyboardButton("💰 Saldo Nomor", callback_data="wallet:home")])
+                  [InlineKeyboardButton("💰 Saldo", callback_data="wallet:home")])
     return InlineKeyboardMarkup([
         number_row,
         [InlineKeyboardButton("⭐ Premium", callback_data="nav:premium"),
          InlineKeyboardButton("🎬 Video Downloader", callback_data="nav:video")],
+        [InlineKeyboardButton("🎁 Gift Premium", callback_data="gift:start")],
         [InlineKeyboardButton("📎 Kirim File", callback_data="nav:file"),
          InlineKeyboardButton("❓ Bantuan", callback_data="nav:help")],
         [InlineKeyboardButton("👥 Undang teman", callback_data="nav:invite")],
@@ -270,7 +273,10 @@ async def user_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not _is_admin(update):
-        await query.answer("Akses admin ditolak.", show_alert=True)
+        await query.answer()
+        await query.message.reply_text(
+            "@kujopinkman adalah admin. Apakah Anda ingin menghubungi admin?",
+            reply_markup=_admin_contact_keyboard())
         return
     await query.answer()
     parts = (query.data or "").split(":")
@@ -366,7 +372,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await query.edit_message_text("Pengguna tidak ditemukan.", reply_markup=_admin_keyboard()); return
             balance = admin_panel.number_wallet_balance(target_id)
             await query.edit_message_text(
-                f"Kosongkan saldo nomor pengguna {target_id}?\nSaldo saat ini: Rp{balance:,}",
+                f"Kosongkan Saldo pengguna {target_id}?\nSaldo saat ini: Rp{balance:,}",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🧹 Ya, kosongkan saldo", callback_data=f"admin:walletclearconfirm:{target_id}")],
                     [InlineKeyboardButton("Batal", callback_data=f"admin:user:{target_id}")],
@@ -378,7 +384,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await query.edit_message_text("Pengguna tidak ditemukan.", reply_markup=_admin_keyboard()); return
             admin_panel.clear_number_wallet(target_id)
             await query.edit_message_text(
-                f"Saldo nomor pengguna {target_id} dikosongkan.",
+                f"Saldo pengguna {target_id} dikosongkan.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ Kembali ke pengguna", callback_data=f"admin:user:{target_id}")],
                     [InlineKeyboardButton("🏠 Menu admin", callback_data="admin:home")],
@@ -495,14 +501,14 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.extend(["", f"Paket: {plan['plan']} · AI {plan['quota_period']}: {plan['used']}/{plan['limit']}"])
         if plan["expires_at"]:
             lines.append(f"Premium berlaku sampai: {plan['expires_at'][:10]} UTC")
-        lines.append(f"Saldo nomor: Rp{admin_panel.number_wallet_balance(user_id):,}")
+        lines.append(f"Saldo: Rp{admin_panel.number_wallet_balance(user_id):,}")
         controls = [
             [InlineKeyboardButton("⭐ Tambah Premium",
                                   callback_data=f"admin:grantpremium:{user_id}")],
             [InlineKeyboardButton("↩️ Hapus Premium" if plan["plan"] == "Premium" else "Paket gratis",
                                   callback_data=f"admin:revokepremium:{user_id}")],
-            [InlineKeyboardButton("➕ Tambah saldo nomor", callback_data=f"admin:walletadd:{user_id}")],
-            [InlineKeyboardButton("🧹 Kosongkan saldo nomor", callback_data=f"admin:walletclear:{user_id}")],
+            [InlineKeyboardButton("➕ Tambah Saldo", callback_data=f"admin:walletadd:{user_id}")],
+            [InlineKeyboardButton("🧹 Kosongkan Saldo", callback_data=f"admin:walletclear:{user_id}")],
             [InlineKeyboardButton("🧹 Hapus chat/riwayat", callback_data=f"admin:clearhistory:{user_id}")],
             [InlineKeyboardButton("🔓 Buka blokir" if blocked else "🚫 Blokir pengguna",
                                   callback_data=f"admin:{'unblock' if blocked else 'block'}:{user_id}")],
@@ -554,6 +560,12 @@ async def _channel_membership_gate(update: Update, context: ContextTypes.DEFAULT
         )
         if is_check:
             await query.answer("Bot perlu menjadi admin channel agar bisa memeriksa keanggotaan.", show_alert=True)
+        elif query:
+            await query.answer("Bot belum bisa memeriksa keanggotaan channel.", show_alert=True)
+            try:
+                await context.bot.send_message(chat_id=user.id, text=text, reply_markup=_join_channel_keyboard())
+            except TelegramError:
+                log.info("Tidak dapat mengirim panduan keanggotaan ke pengguna %s", user.id)
         elif update.effective_message:
             await update.effective_message.reply_text(text, reply_markup=_join_channel_keyboard())
         raise ApplicationHandlerStop
@@ -565,7 +577,13 @@ async def _channel_membership_gate(update: Update, context: ContextTypes.DEFAULT
     if is_check:
         await query.answer("Anda belum bergabung ke channel.", show_alert=True)
         raise ApplicationHandlerStop
-    if update.effective_message:
+    if query:
+        await query.answer("Untuk mengklaim gift, bergabunglah ke channel transaksi terlebih dahulu.", show_alert=True)
+        try:
+            await context.bot.send_message(chat_id=user.id, text=text, reply_markup=_join_channel_keyboard())
+        except TelegramError:
+            log.info("Tidak dapat mengirim panduan keanggotaan ke pengguna %s", user.id)
+    elif update.effective_message:
         await update.effective_message.reply_text(text, reply_markup=_join_channel_keyboard())
     raise ApplicationHandlerStop
 
@@ -590,7 +608,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     referral_awarded = invite.process_start_referral(context, user)
     admin_panel.record_event(user, "start")
     if referral_awarded:
-        await update.effective_message.reply_text("🎁 Bonus saldo nomor Rp200 dari undangan berhasil ditambahkan.")
+        await update.effective_message.reply_text("🎁 Bonus Saldo Rp200 dari undangan berhasil ditambahkan.")
+    if context.args and context.args[0] == "beli_nomor":
+        await num.numbers_command(update, context)
+        return
     await _send_home(update.effective_message, user)
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -628,6 +649,8 @@ async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.effective_message.reply_text("Kode ini sudah pernah Anda gunakan.")
     elif result == "exhausted":
         await update.effective_message.reply_text("Batas pengguna kode ini sudah tercapai.")
+    elif result == "gift_channel":
+        await update.effective_message.reply_text("Gift Premium hanya bisa diklaim melalui tombol di channel transaksi.")
     else:
         await update.effective_message.reply_text("Kode redeem tidak valid.")
 
@@ -637,6 +660,9 @@ async def cancel_redeem_setup(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     if context.user_data.pop("number_topup_waiting_amount", None):
         await update.effective_message.reply_text("Input nominal top up dibatalkan.")
+        return
+    if context.user_data.pop("premium_gift_waiting_days", None):
+        await update.effective_message.reply_text("Pembuatan gift Premium dibatalkan.")
         return
     if not _is_admin(update):
         return
@@ -661,8 +687,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if await _reject_blocked_user(update):
         return
     admin_panel.record_event(update.effective_user, "message")
-    number_help = "• Beli nomor melalui /nomor; cek saldo dan top up via QRIS lewat /saldo.\n" if admin_panel.is_number_purchase_visible() or _is_admin(update) else "• Cek saldo dan top up nomor via QRIS lewat /saldo.\n"
-    await update.effective_message.reply_text("Cara memakai bot:\n• Ketik pesan atau pertanyaan biasa untuk mulai chat.\n• Tekan 📎 Kirim File lalu lampirkan dokumen agar saya baca atau rangkum.\n• Setelah dokumen diproses, gunakan /ask <pertanyaan> untuk bertanya tentang isinya.\n" + number_help + "• Undang teman lewat /invite: teman baru mendapat saldo Rp200 dan Anda mendapat komisi 1% dari pembelian nomor mereka.\n• Lihat daftar garapan airdrop lewat /airdrop.\n• Unduh video dengan /download <tautan> atau tempel tautan YouTube, Instagram, TikTok, maupun Facebook.\n\nPerintah: /start, /invite, /help, /download, /airdrop, /dashboard. Batas ukuran file diatur admin.", reply_markup=_tab_keyboard())
+    number_help = ("• Beli nomor melalui /nomor; cek atau top up Saldo via QRIS lewat /saldo. Saldo dapat dipakai untuk membeli nomor dan Premium.\n"
+                   if admin_panel.is_number_purchase_visible() or _is_admin(update)
+                   else "• Cek atau top up Saldo via QRIS lewat /saldo. Saldo dapat dipakai untuk membeli Premium.\n")
+    await update.effective_message.reply_text("Cara memakai bot:\n• Ketik pesan atau pertanyaan biasa untuk mulai chat.\n• Tekan 📎 Kirim File lalu lampirkan dokumen agar saya baca atau rangkum.\n• Setelah dokumen diproses, gunakan /ask <pertanyaan> untuk bertanya tentang isinya.\n" + number_help + "• Gift Premium lewat /gift <hari> [jumlah_pengguna] (masing-masing 1–1000), contoh /gift 1 3; klaimnya disiarkan di channel transaksi dan dapat dibagikan ke banyak pengguna.\n• Undang teman lewat /invite: teman baru mendapat saldo Rp200 dan Anda mendapat komisi 1% dari pembelian nomor mereka.\n• Lihat daftar garapan airdrop lewat /airdrop.\n• Unduh video dengan /download <tautan> atau tempel tautan YouTube, Instagram, TikTok, maupun Facebook.\n\nPerintah: /start, /invite, /help, /gift, /download, /airdrop, /dashboard. Batas ukuran file diatur admin.", reply_markup=_tab_keyboard())
 
 def _parse_idr_amount(value: str) -> int | None:
     raw = re.sub(r"(?i)^rp\s*", "", value.strip())
@@ -674,6 +702,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if await _reject_blocked_user(update):
         return
     if await num.handle_pending_text(update, context):
+        return
+    if await gift.handle_pending_text(update, context):
         return
     if await file_feature.handle_pending_password(update, context):
         return
@@ -718,7 +748,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             admin_panel.credit_number_wallet(target_id, amount)
             balance = admin_panel.number_wallet_balance(target_id)
             await update.message.reply_text(
-                f"Saldo nomor pengguna {target_id} ditambah Rp{amount:,}. Saldo sekarang Rp{balance:,}.",
+                f"Saldo pengguna {target_id} ditambah Rp{amount:,}. Saldo sekarang Rp{balance:,}.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("⬅️ Kembali ke pengguna", callback_data=f"admin:user:{target_id}")],
                     [InlineKeyboardButton("🏠 Menu admin", callback_data="admin:home")],
@@ -767,7 +797,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "🏠 Menu Awal": start,
         "📊 Dashboard": dashboard_command,
         **({"📱 Beli Nomor": numbers_command} if admin_panel.is_number_purchase_visible() or _is_admin(update) else {}),
-        "💰 Saldo Nomor": wallet_command,
+        "💰 Saldo": wallet_command,
     }
     if question in menu_actions:
         await menu_actions[question](update, context)
@@ -802,11 +832,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 import airdrop
 import buy
 import file as file_feature
+import gift
 import invite
 import num
 import vid
 
-for _feature_module in (airdrop, buy, file_feature, invite, num, vid):
+for _feature_module in (airdrop, buy, file_feature, gift, invite, num, vid):
     _feature_module.configure(globals())
 
 # Preserve public handler names used by command registration and cross-feature actions.
@@ -820,6 +851,8 @@ plans_command = buy.plans_command
 payment_callback = buy.payment_callback
 _announce_admin_premium_grant = buy._announce_admin_premium_grant
 _announce_redeem_success = buy._announce_redeem_success
+gift_command = gift.gift_command
+gift_callback = gift.gift_callback
 wallet_command = num.wallet_command
 numbers_command = num.numbers_command
 numbers_callback = num.numbers_callback
@@ -844,6 +877,7 @@ async def main() -> None:
     app.add_handler(CommandHandler("paket", plans_command))
     app.add_handler(CommandHandler("nomor", numbers_command))
     app.add_handler(CommandHandler("saldo", wallet_command))
+    app.add_handler(CommandHandler("gift", gift_command))
     app.add_handler(CommandHandler("redeem", redeem_command))
     app.add_handler(CommandHandler("batal", cancel_redeem_setup))
     app.add_handler(CallbackQueryHandler(admin_callback, pattern=r"^admin:"))
@@ -853,6 +887,7 @@ async def main() -> None:
     app.add_handler(CallbackQueryHandler(numbers_callback, pattern=r"^numbers:"))
     app.add_handler(CallbackQueryHandler(wallet_callback, pattern=r"^wallet:"))
     app.add_handler(CallbackQueryHandler(payment_callback, pattern=r"^plan:"))
+    app.add_handler(CallbackQueryHandler(gift_callback, pattern=r"^gift:"))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("airdrop", airdrop_command))
     app.add_handler(CommandHandler("ask", ask_command))

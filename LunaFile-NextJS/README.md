@@ -36,7 +36,9 @@ Variabel konfigurasi ada di `.env.example`. Nilai API key dan password sengaja d
 
 - Telegram: menu, akses channel, file dan jawaban AI, kuota, Premium, redeem, Airdrop, perintah unduh video, dan kontrol admin utama.
 - Beli nomor Telekos: server, aplikasi (WhatsApp di urutan pertama), negara (Indonesia di urutan pertama), pencarian negara, daftar harga dengan stok, pembelian, pemeriksaan OTP, pembatalan, dan saldo internal.
-- Midtrans QRIS untuk Premium dan top up saldo; pembayaran dapat dicek lewat tombol setelah transaksi.
+- Pengumuman pembelian nomor mengikuti format transaksi, menyamarkan nomor, dan menyertakan tombol Beli Nomor yang membuka bot melalui `/start beli_nomor`; margin bertingkat mengikuti harga dasar Telekos.
+- Midtrans QRIS untuk top up Saldo dan pilihan pembayaran Premium; Premium juga dapat dibeli dengan Saldo. Pembayaran QRIS dapat dicek lewat tombol setelah transaksi.
+- Gift Premium 1–1000 hari untuk 1–1000 pengguna dari Saldo; tombol klaim di channel transaksi tetap aktif sampai kuota penerima habis.
 - Webhook OTP Telekos bertanda tangan HMAC dan deduplikasi delivery.
 - Panel admin Next.js untuk statistik pengguna/AI.
 

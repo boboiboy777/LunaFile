@@ -207,12 +207,15 @@ def _admin_dashboard_text() -> str:
             "Pilih bagian yang ingin dilihat di bawah.")
 
 
+def _admin_contact_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("💬 Hubungi admin", url="https://t.me/kujopinkman")]])
+
+
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(update):
-        user_id = update.effective_user.id if update.effective_user else "tidak tersedia"
         await update.message.reply_text(
-            f"Akses admin ditolak. ID Telegram Anda: {user_id}. "
-            "Pemilik bot perlu menambahkan ID ini ke ADMIN_TELEGRAM_IDS di file .env, lalu memulai ulang bot.")
+            "@kujopinkman adalah admin. Apakah Anda ingin menghubungi admin?",
+            reply_markup=_admin_contact_keyboard())
         return
     await update.message.reply_text(_admin_dashboard_text(), reply_markup=_admin_keyboard())
 
@@ -225,7 +228,10 @@ async def myid_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if not _is_admin(update):
-        await query.answer("Akses admin ditolak.", show_alert=True)
+        await query.answer()
+        await query.message.reply_text(
+            "@kujopinkman adalah admin. Apakah Anda ingin menghubungi admin?",
+            reply_markup=_admin_contact_keyboard())
         return
     await query.answer()
     parts = (query.data or "").split(":")

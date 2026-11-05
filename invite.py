@@ -32,7 +32,7 @@ async def _invite_text(bot: Any, user_id: int) -> str:
     return (
         "👥 Undang teman ke LunaFile\n\n"
         f"Tautan undangan Anda:\n{link}\n\n"
-        "Teman baru yang mulai memakai bot melalui tautan ini mendapat saldo nomor Rp200. "
+        "Teman baru yang mulai memakai bot melalui tautan ini mendapat Saldo Rp200. "
         "Anda mendapat komisi saldo 1% dari setiap pembelian nomor teman yang berhasil.\n\n"
         f"Teman diundang: {summary['invited']}\n"
         f"Bonus saldo untuk teman: Rp{summary['signup_rewards']:,}\n"
